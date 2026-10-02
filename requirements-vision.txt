@@ -1,0 +1,3 @@
+# Optional dependency for real facial recognition on CPU.
+# InsightFace installs ONNX Runtime and OpenCV without requiring dlib or C++ compilation.
+insightface>=2.0

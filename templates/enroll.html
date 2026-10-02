@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block title %}Cargar biometría{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow">Enrolamiento</p><h1>Cargar biometría</h1><p>Persona: <strong>{{ employee.full_name }}</strong>. Elegí una foto donde aparezca exactamente un rostro, de frente y con buena iluminación.</p>
+<form method="post" enctype="multipart/form-data" class="form-grid">
+  <label>Foto facial <small>JPG o PNG, hasta 5 MB. Desde el celular podés tomarla directamente.</small><input name="photo" type="file" accept="image/png,image/jpeg" capture="user" required></label>
+  <div class="form-actions"><a href="{{ url_for('employees') }}">Cancelar</a><button class="button" type="submit">Guardar biometría</button></div>
+</form></section>
+{% endblock %}
