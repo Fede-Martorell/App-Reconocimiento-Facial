@@ -9,3 +9,7 @@ _review_docx/
 # Fotos de empleados y resultados personales de los scripts.
 empleados/*
 !empleados/.gitkeep
+
+# Archivos temporales de generación de las guías y CSV de la variante simple.
+tmp/
+asistencia.csv

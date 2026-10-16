@@ -47,6 +47,7 @@ def initialize_database() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 employee_id INTEGER NOT NULL UNIQUE,
                 face_encoding BLOB,
+                encoding_model TEXT,
                 source_image_path TEXT,
                 enrolled_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
@@ -63,6 +64,9 @@ def initialize_database() -> None:
             );
             """
         )
+        columns = {row[1] for row in db.execute("PRAGMA table_info(biometric_profiles)")}
+        if "encoding_model" not in columns:
+            db.execute("ALTER TABLE biometric_profiles ADD COLUMN encoding_model TEXT")
 
 
 def query_all(sql: str, parameters: tuple = ()) -> list[sqlite3.Row]:
@@ -73,4 +77,3 @@ def query_all(sql: str, parameters: tuple = ()) -> list[sqlite3.Row]:
 def query_one(sql: str, parameters: tuple = ()) -> sqlite3.Row | None:
     with get_connection() as db:
         return db.execute(sql, parameters).fetchone()
-

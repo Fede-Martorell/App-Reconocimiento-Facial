@@ -78,11 +78,17 @@ def encoding_from_bytes(image_bytes: bytes) -> np.ndarray:
 def find_match(image_bytes: bytes, profiles, minimum_similarity: float = 0.40):
     """Return (employee_id, cosine distance), or (None, distance)."""
     candidate = encoding_from_bytes(image_bytes)
-    stored = [np.load(BytesIO(profile["face_encoding"]), allow_pickle=False) for profile in profiles]
+    compatible_profiles = []
+    stored = []
+    for profile in profiles:
+        encoding = np.load(BytesIO(profile["face_encoding"]), allow_pickle=False)
+        if encoding.shape == candidate.shape:
+            compatible_profiles.append(profile)
+            stored.append(encoding)
     if not stored:
         return None, None
     similarities = np.asarray(stored) @ candidate
     position = int(np.argmax(similarities))
     similarity = float(similarities[position])
     distance = 1.0 - similarity
-    return (profiles[position]["employee_id"], distance) if similarity >= minimum_similarity else (None, distance)
+    return (compatible_profiles[position]["employee_id"], distance) if similarity >= minimum_similarity else (None, distance)

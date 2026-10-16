@@ -121,3 +121,9 @@ Los dos scripts usan **face_recognition/dlib**, como pide la consigna. El panel 
 Se trata de un prototipo educativo, sin prueba de vida, autenticación administrativa ni evaluación formal de precisión. La ejecución web tiene debug desactivado por defecto; `FLASK_DEBUG=1` lo habilita para desarrollo. Para compartir o usar datos reales hacen falta controles adicionales. La primera preparación del motor del panel puede descargar modelos.
 
 `data/`, `uploads/` y las fotos dentro de `empleados/` están ignorados por Git porque contienen datos personales. SQLite es local; no hace falta configurar un servidor.
+
+## Archivos integrados del grupo
+
+Se conserva `control_asistencia.py`, la variante simple de cámara del grupo: usa las fotos de `empleados/`, tolerancia 0.50 y genera `asistencia.csv` con nombre, fecha y hora. El programa `asistencia.py` agrega la integración con el panel y el CSV compartido `data/asistencias.csv`, con tolerancia inicial 0.60.
+
+`GUIA_EXPOSICION_5_PERSONAS.md` distribuye la defensa entre los integrantes. El panel conserva InsightFace de 512 componentes y los scripts académicos utilizan face_recognition de 128. La columna `encoding_model` incorporada por el grupo identifica el motor; las biometrías anteriores sin esa marca siguen siendo compatibles por dimensión. No se mezclan los vectores de motores diferentes.
