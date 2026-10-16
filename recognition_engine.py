@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 
@@ -46,7 +47,14 @@ def encoding_from_image(path: str) -> bytes:
         import cv2
     except ImportError as error:
         raise RecognitionUnavailable("Faltan las librerías de reconocimiento. Instalá requirements-vision.txt.") from error
-    image = cv2.imread(path)
+    # Read bytes with Python so Windows paths containing accents work.
+    try:
+        image_bytes = Path(path).read_bytes()
+    except OSError as error:
+        raise ValueError("No se pudo leer la imagen subida.") from error
+    if not image_bytes:
+        raise ValueError("No se pudo leer la imagen subida.")
+    image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError("No se pudo leer la imagen subida.")
     buffer = BytesIO()
@@ -59,6 +67,8 @@ def encoding_from_bytes(image_bytes: bytes) -> np.ndarray:
         import cv2
     except ImportError as error:
         raise RecognitionUnavailable("Faltan las librerías de reconocimiento. Instalá requirements-vision.txt.") from error
+    if not image_bytes:
+        raise ValueError("No se pudo leer la imagen capturada.")
     image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError("No se pudo leer la imagen capturada.")

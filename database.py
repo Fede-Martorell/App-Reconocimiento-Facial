@@ -11,9 +11,19 @@ DATA_DIR = BASE_DIR / "data"
 DATABASE_PATH = DATA_DIR / "facial_access.db"
 
 
+class DatabaseConnection(sqlite3.Connection):
+    """Confirmar/revertir la transacción y cerrar al salir del contexto."""
+
+    def __exit__(self, exception_type, exception, traceback):
+        try:
+            return super().__exit__(exception_type, exception, traceback)
+        finally:
+            self.close()
+
+
 def get_connection() -> sqlite3.Connection:
     DATA_DIR.mkdir(exist_ok=True)
-    connection = sqlite3.connect(DATABASE_PATH)
+    connection = sqlite3.connect(DATABASE_PATH, factory=DatabaseConnection)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection

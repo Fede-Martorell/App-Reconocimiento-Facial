@@ -5,9 +5,10 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, flash, redirect, render_template, request, send_file, url_for
 from werkzeug.utils import secure_filename
 
+from attendance_log import DEFAULT_CSV, read_attendance, record_attendance
 from database import get_connection, initialize_database, query_all, query_one
 from recognition_engine import RecognitionUnavailable, encoding_from_image, find_match
 
@@ -19,6 +20,7 @@ ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", "cambiar-antes-de-produccion")
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
+app.config["ATTENDANCE_CSV"] = DEFAULT_CSV
 
 
 def allowed_file(filename: str) -> bool:
@@ -117,7 +119,7 @@ def new_employee():
         else:
             flash("Personal registrado. Falta cargar una foto para habilitar el reconocimiento.", "success")
         return redirect(url_for("employees"))
-    except (ValueError, RecognitionUnavailable) as error:
+    except (ValueError, RecognitionUnavailable, OSError) as error:
         # Keep the employee record: it is useful for an administrator to complete enrollment later.
         flash(f"Personal creado, pero no se pudo cargar la biometria: {error}", "error")
         return redirect(url_for("employees"))
@@ -153,7 +155,7 @@ def enroll_employee(employee_id: int):
         save_biometric_profile(employee_id, request.files.get("photo"))
         flash("Biometría facial cargada correctamente.", "success")
         return redirect(url_for("employees"))
-    except (ValueError, RecognitionUnavailable) as error:
+    except (ValueError, RecognitionUnavailable, OSError) as error:
         flash(f"No se pudo cargar la biometría: {error}", "error")
         return redirect(url_for("enroll_employee", employee_id=employee_id))
 
@@ -184,14 +186,51 @@ def access():
                 decision = {"result": "denied", "message": "Acceso denegado", "distance": distance}
             else:
                 employee = query_one("SELECT full_name FROM employees WHERE id = ?", (employee_id,))
+                # La asistencia diaria se comparte con el script de webcam.
+                registered = record_attendance(employee_id, employee["full_name"], app.config["ATTENDANCE_CSV"], origin="web")
                 write_access_log(employee_id, "allowed", "Reconocimiento facial validado")
-                decision = {"result": "allowed", "message": f"Acceso permitido: {employee['full_name']}", "distance": distance}
-        except (ValueError, RecognitionUnavailable) as error:
+                decision = {"result": "allowed", "message": f"Acceso permitido: {employee['full_name']}", "distance": distance,
+                            "attendance": "Asistencia registrada." if registered else "Ya registraste asistencia hoy."}
+        except (ValueError, RecognitionUnavailable, OSError) as error:
             write_access_log(None, "denied", str(error))
             decision = {"result": "denied", "message": str(error), "distance": None}
     return render_template("access.html", decision=decision)
 
 
+@app.get("/attendance")
+def attendance():
+    try:
+        rows = read_attendance(app.config["ATTENDANCE_CSV"])
+    except (ValueError, OSError) as error:
+        flash(f"No se pudo leer el registro de asistencias: {error}", "error")
+        rows = []
+    return render_template("attendance.html", rows=list(reversed(rows[-200:])))
+
+
+@app.get("/attendance.csv")
+def download_attendance():
+    path = Path(app.config["ATTENDANCE_CSV"])
+    if not path.exists():
+        flash("Todavía no hay asistencias para descargar.", "error")
+        return redirect(url_for("attendance"))
+    # Generar una copia consistente evita descargar una fila mientras se escribe.
+    import csv
+    from io import BytesIO, StringIO
+    try:
+        rows = read_attendance(path)
+        from attendance_log import FIELDS
+        text = StringIO(newline="")
+        writer = csv.DictWriter(text, fieldnames=FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+        return send_file(BytesIO(text.getvalue().encode("utf-8-sig")), mimetype="text/csv",
+                         as_attachment=True, download_name="asistencias.csv")
+    except (ValueError, OSError) as error:
+        flash(f"No se pudo descargar el registro: {error}", "error")
+        return redirect(url_for("attendance"))
+
+
 if __name__ == "__main__":
     initialize_database()
-    app.run(host=os.environ.get("APP_HOST", "127.0.0.1"), port=5000, debug=True)
+    app.run(host=os.environ.get("APP_HOST", "127.0.0.1"), port=5000,
+            debug=os.environ.get("FLASK_DEBUG") == "1")

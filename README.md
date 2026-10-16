@@ -1,59 +1,123 @@
-# Control de acceso con reconocimiento facial - Sprint 1
+# Proyecto 2 - Sistema de Asistencias por reconocimiento facial
 
-Prototipo local para administrar personal autorizado, registrar biometrías faciales y verificar el acceso desde una cámara web. Los datos quedan guardados en SQLite (`data/facial_access.db`), por lo que no hace falta instalar ni conectar un servidor de base de datos.
+El proyecto incluye los **dos scripts de la consigna** y el panel web que ya tenía el equipo.
 
-## Alcance del sprint
+- `comparar_rostros.py`: compara una imagen de control con una de prueba. Muestra ambos rostros con recuadros, coincidencia y distancia.
+- `asistencia.py`: reconoce empleados con la webcam, dibuja nombres y recuadros, y registra el primer ingreso del día en CSV.
+- `app.py`: panel web de personal, enrolamiento, molinete y consulta/descarga de asistencias.
 
-- Panel de administrador: alta de personal y activación/desactivación de acceso.
-- Enrolamiento con una foto que contenga exactamente un rostro.
-- Simulador de molinete desde el navegador usando la cámara.
-- Registro persistente de accesos permitidos y denegados.
-- Solo las personas activas y con biometría cargada pueden ingresar.
+## Instalar en Windows
 
-## Cómo ejecutarlo
+Desde PowerShell en esta carpeta, ejecutar una línea a la vez:
 
-Requiere Python 3.10 o superior. En PowerShell, dentro de esta carpeta:
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\install_windows.ps1
+```
+
+El instalador usa `.venv` directamente; no necesita activación. Para compilar `dlib` puede hacer falta CMake y Visual Studio Build Tools con **Desarrollo de escritorio con C++**. En el equipo revisado se comprobó su presencia. No alcanza con instalar solo CMake si faltan las herramientas de C++. Los scripts usan rutas cortas de Windows para los modelos de dlib cuando la carpeta contiene tildes. Si el equipo no dispone de esas rutas, generan una caché temporal sin tildes; puede indicarse con FACE_MODELS_CACHE.
+
+Instalación manual:
 
 ```powershell
 py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python app.py
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-vision.txt -r requirements-asistencia.txt
+.\.venv\Scripts\python.exe -m pip check
 ```
 
-Abrí `http://127.0.0.1:5000` en el navegador. La primera ejecución crea automáticamente la base de datos SQLite.
+`requirements.txt` instala el panel y NumPy. `requirements-vision.txt` instala InsightFace para el panel. `requirements-asistencia.txt` instala `face_recognition`, OpenCV y las dependencias de los dos scripts académicos. `os`, `csv`, `datetime`, `pathlib` y `sqlite3` forman parte de Python.
 
-## Usarlo desde un teléfono en la misma red Wi-Fi
-
-No hace falta una nube para la demostración. Ejecutá la aplicación permitiendo conexiones de la red local:
+## 1. Comparar dos imágenes
 
 ```powershell
-$env:APP_HOST = "0.0.0.0"
-python app.py
+.\.venv\Scripts\python.exe comparar_rostros.py "C:\ruta\control.jpg" "C:\ruta\prueba.jpg"
 ```
 
-En la computadora, ejecutá `ipconfig` y buscá la dirección IPv4 de la red Wi-Fi, por ejemplo `192.168.1.25`. Desde el teléfono, conectado al mismo Wi-Fi, abrí `http://192.168.1.25:5000`. Windows puede pedir permiso para el firewall: habilitalo solamente en redes privadas.
+Cada imagen debe contener exactamente un rostro. Se abre una ventana con las imágenes, sus recuadros, el resultado y la distancia. Pulsar una tecla para cerrar. También guarda `data/comparacion.jpg`.
 
-En la carga de personal y en el molinete hay una opción para tomar o seleccionar una foto desde el teléfono. Esta alternativa funciona aun cuando el navegador no permite la cámara en vivo por falta de HTTPS.
-
-El comando anterior instala el panel y SQLite, que es todo lo necesario para administrar personal desde el navegador.
-
-### Reconocimiento facial real (segundo paso)
-
-Para evitar problemas de compilación de `dlib` en Windows, el proyecto usa InsightFace y ONNX Runtime. Instalá las dependencias de visión por separado:
+Para ejecutar sin ventana:
 
 ```powershell
-pip install -r requirements-vision.txt
+.\.venv\Scripts\python.exe comparar_rostros.py "C:\ruta\control.jpg" "C:\ruta\prueba.jpg" --sin-ventana --salida "data/comparacion.jpg"
 ```
 
-La primera carga de biometría descarga el modelo de reconocimiento; mantené la conexión a Internet durante ese paso. Hasta completar la instalación, el panel, SQLite, altas, bajas y registro de accesos funcionan.
+La distancia de `face_recognition` es euclídea entre vectores de 128 componentes: **menor es más parecido**. La tolerancia inicial es `0.6`; puede cambiarse con `--tolerancia`. No es un porcentaje ni garantiza precisión: debe evaluarse con fotografías distintas de la misma persona y de otras personas.
 
-## Decisiones de diseño
+## 2. Preparar empleados
 
-SQLite es la mejor opción para la demo: no necesita usuario, contraseña, hosting ni conexión de red. Para una fase posterior con varios molinetes simultáneos, se migraría a PostgreSQL y se protegerían los templates biométricos con cifrado y controles de acceso.
+Hay dos fuentes, elegidas explícitamente:
 
-El vector facial se guarda como `face_encoding`, no como hash: un encoding de reconocimiento facial es un vector numérico y no un hash criptográfico.
+### Usar las fotos registradas en el panel
 
-## Datos que no se suben al repositorio
+```powershell
+.\.venv\Scripts\python.exe app.py
+```
 
-La base SQLite y las imágenes usadas para enrolamiento se generan en `data/` y `uploads/`; ambos directorios están ignorados por Git porque contienen información personal y biométrica de prueba.
+Abrir http://127.0.0.1:5000, cargar personal y enrolar sus fotos. Luego ejecutar `asistencia.py` desde otra terminal. El script usa las **fotos** de los empleados activos para calcular sus propios vectores con `face_recognition`. No modifica ni reutiliza como propios los vectores de InsightFace.
+
+### Usar una carpeta, como en la consigna
+
+Colocar JPG o PNG dentro de `empleados/`, por ejemplo:
+
+```text
+empleados/
+  Ana_Perez.jpg
+  Bruno_Gomez.png
+```
+
+El programa lista la carpeta con `os.listdir` y obtiene el nombre del archivo: `Ana_Perez.jpg` se muestra como `Ana Perez`. Cada foto de referencia debe tener un rostro. En este modo no existe el estado activo/inactivo del panel: las fotos de esa carpeta forman el padrón. Usar nombres de archivo distintos para personas distintas.
+
+## 3. Iniciar asistencia en tiempo real
+
+Con empleados del panel:
+
+```powershell
+.\.venv\Scripts\python.exe asistencia.py
+```
+
+Con la carpeta de la consigna:
+
+```powershell
+.\.venv\Scripts\python.exe asistencia.py --fuente carpeta --empleados empleados
+```
+
+La cámara muestra recuadros y nombres. Los desconocidos aparecen en rojo y no generan asistencia. Se procesa uno de cada tres cuadros por defecto para reducir CPU; `--cada 1` procesa todos. La ventana muestra el último cuadro procesado con sus anotaciones. **Q** o **Escape** cierran y liberan la cámara. Si la webcam está ocupada, cerrar la cámara del navegador y otras apps; usar `--camara 1` si corresponde a otro dispositivo.
+
+El modo del panel vuelve a consultar el estado activo al reconocer y antes de registrar. Para incorporar fotos nuevas o reemplazadas hay que reiniciar el script, porque las referencias se cargan al iniciar.
+
+## CSV de asistencias
+
+Web y webcam comparten `data/asistencias.csv` con columnas:
+
+```csv
+empleado_id,nombre,fecha,hora,origen
+1,Ana Perez,2026-10-16,09:15:30,webcam
+```
+
+La fecha y hora son locales del equipo. Se guarda **un primer ingreso por persona y día**, incluso al reiniciar el programa, para no repetir una fila por cada fotograma. Al día siguiente se admite un nuevo ingreso. Personas distintas con el mismo nombre se distinguen por su ID en el modo base. En modo carpeta el ID deriva del nombre del archivo.
+
+La web muestra **Asistencias** y permite descargar el CSV. Los accesos denegados permanecen en el historial de accesos de SQLite, pero no se agregan al CSV de presentes. El archivo usa UTF-8 con BOM para conservar tildes al abrirlo en Excel. `--csv otra/ruta.csv` permite elegir un archivo distinto para una demostración o prueba.
+
+## Prueba con una foto sin abrir la webcam
+
+```powershell
+.\.venv\Scripts\python.exe asistencia.py --imagen "C:\ruta\foto.jpg" --csv "data/prueba_asistencias.csv"
+```
+
+Usa el mismo flujo de detección y registro, guarda `data/asistencia_prueba.jpg` y no abre la cámara. Es una prueba de diagnóstico; no sustituye probar la webcam física. El CSV separado evita registrar una asistencia real durante el ensayo.
+
+## Pruebas automatizadas
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Consultar `CONSIGNA.md` para el mapa de requisitos y `VERIFICACION_CONSIGNA.md` para los resultados y límites de la verificación. Los PDF anteriores son material del Sprint 1 previo a estos cambios.
+
+## Motores y límites
+
+Los dos scripts usan **face_recognition/dlib**, como pide la consigna. El panel conserva **InsightFace/ONNX Runtime** para mantener sus perfiles existentes. Son motores y espacios de vectores diferentes: no se mezclan sus distancias ni sus umbrales. El umbral coseno de `0.40` del panel no equivale a la tolerancia euclídea de `0.6` de los scripts.
+
+Se trata de un prototipo educativo, sin prueba de vida, autenticación administrativa ni evaluación formal de precisión. La ejecución web tiene debug desactivado por defecto; `FLASK_DEBUG=1` lo habilita para desarrollo. Para compartir o usar datos reales hacen falta controles adicionales. La primera preparación del motor del panel puede descargar modelos.
+
+`data/`, `uploads/` y las fotos dentro de `empleados/` están ignorados por Git porque contienen datos personales. SQLite es local; no hace falta configurar un servidor.

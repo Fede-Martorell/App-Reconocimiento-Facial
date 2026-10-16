@@ -5,3 +5,7 @@ uploads/
 _review_docx/
 .env
 *.pyc
+
+# Fotos de empleados y resultados personales de los scripts.
+empleados/*
+!empleados/.gitkeep
