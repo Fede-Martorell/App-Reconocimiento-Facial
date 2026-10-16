@@ -1,19 +1,35 @@
 {% extends 'base.html' %}
-{% block title %}Molinete{% endblock %}
+{% block title %}Registrar ingreso{% endblock %}
 {% block content %}
-<section class="page-heading"><div><p class="eyebrow">Simulador</p><h1>Molinete principal</h1><p>Captura una imagen y verifica el acceso contra el personal activo.</p></div></section>
-<section class="access-layout"><div class="card camera-card"><video id="camera" autoplay playsinline></video><canvas id="canvas" hidden></canvas><p id="camera-status">Solicitando permiso de cámara…</p><button class="button secondary" id="capture" type="button" disabled>Capturar rostro</button></div>
-<div class="card decision-card">{% if decision %}<div class="decision {{ decision.result }}"><h2>{{ decision.message }}</h2>{% if decision.attendance %}<p>{{ decision.attendance }}</p>{% endif %}{% if decision.distance is not none %}<p>Distancia de comparación: {{ '%.3f'|format(decision.distance) }}</p>{% endif %}</div>{% else %}<h2>Esperando verificación</h2><p>La decisión quedará registrada en el panel de administración.</p>{% endif %}<form id="verification-form" method="post" enctype="multipart/form-data"><input id="snapshot" name="snapshot" type="hidden"><label class="upload-label">Alternativa desde celular <small>Tomá o seleccioná una foto si la cámara en vivo no está disponible.</small><input id="photo" name="photo" type="file" accept="image/png,image/jpeg" capture="user"></label><button class="button" id="verify" type="submit" disabled>Verificar acceso</button></form></div></section>
-<script>
-const video=document.getElementById('camera'), canvas=document.getElementById('canvas'), status=document.getElementById('camera-status'), capture=document.getElementById('capture'), verify=document.getElementById('verify'), snapshot=document.getElementById('snapshot'), photo=document.getElementById('photo');
-photo.addEventListener('change',event=>{verify.disabled=!event.target.files.length && !snapshot.value;if(event.target.files.length){snapshot.value='';status.textContent='Foto seleccionada. Ya podés verificar el acceso.';verify.disabled=false}});
-video.addEventListener('loadeddata',()=>{capture.disabled=false});
-capture.addEventListener('click',()=>{if(!video.videoWidth || !video.videoHeight){status.textContent='Esperá a que la cámara esté lista.';return}canvas.width=video.videoWidth;canvas.height=video.videoHeight;canvas.getContext('2d').drawImage(video,0,0);snapshot.value=canvas.toDataURL('image/jpeg',.9);photo.value='';status.textContent='Imagen capturada. Ya podés verificar el acceso.';verify.disabled=false});
-if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-  navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false}).then(stream=>{video.srcObject=stream;status.textContent='Cámara lista. Mirá al frente y capturá la imagen.'}).catch(()=>{status.textContent='La cámara en vivo no está disponible. Usá la opción para tomar o seleccionar una foto.';capture.disabled=true});
-} else {
-  status.textContent='La cámara en vivo requiere HTTPS en este teléfono. Usá la opción para tomar o seleccionar una foto.';
-  capture.disabled=true;
-}
-</script>
+<section class="page-heading">
+  <div><p class="eyebrow">Reconocimiento facial</p><h1>Registrar ingreso</h1><p>Mirá a la cámara, capturá una imagen y verificá tu ingreso.</p></div>
+</section>
+<section class="access-layout">
+  <div class="card camera-card">
+    <video id="camera" autoplay playsinline></video>
+    <canvas id="canvas" hidden></canvas>
+    <p id="camera-status" role="status">Solicitando permiso de cámara…</p>
+    <button class="button secondary" id="capture" type="button" disabled>Capturar rostro</button>
+  </div>
+  <div class="card decision-card">
+    {% if decision %}
+      <div class="decision {{ decision.result }}" role="status">
+        <h2>{{ decision.message }}</h2>
+        {% if decision.attendance %}<p>{{ decision.attendance }}</p>{% endif %}
+      </div>
+    {% else %}
+      <h2>Esperando verificación</h2><p>Tu primer ingreso del día se registra automáticamente al reconocerte.</p>
+    {% endif %}
+    <form id="verification-form" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input id="snapshot" name="snapshot" type="hidden">
+      <label class="upload-label">Usar una fotografía
+        <small>Tomá o seleccioná una foto si la cámara en vivo no está disponible.</small>
+        <input id="photo" name="photo" type="file" accept="image/png,image/jpeg" capture="user">
+      </label>
+      <button class="button" id="verify" type="submit" disabled>Verificar ingreso</button>
+    </form>
+  </div>
+</section>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='camera.js') }}" defer></script>{% endblock %}

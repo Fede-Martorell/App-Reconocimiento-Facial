@@ -1,3 +1,0 @@
-# Motor web y dependencias de los scripts del grupo.
--r requirements-asistencia.txt
-insightface>=2.0

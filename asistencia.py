@@ -1,100 +1,82 @@
-"""Script 2: asistencia en tiempo real con webcam, nombres y registro CSV."""
+"""Script 2: reconocer empleados con la webcam y registrar su asistencia."""
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 from pathlib import Path
 
 import cv2
 
 from attendance_log import DEFAULT_CSV, record_attendance
-from face_recognition_engine import (BASE_DIR, Face, best_match, detect_faces, draw_face,
-                                     is_active, load_profiles, read_image, save_image)
+from face_recognition_engine import BASE_DIR, Face, best_match, detect_faces, draw_face, load_profiles
+from database import DATABASE_PATH, EmployeeRepository
+from services import AttendanceService, InactiveEmployeeError
 
 
-def process_frame(frame, profiles, tolerance, csv_path, *, now: datetime | None = None, origin: str = "webcam"):
-    """Mismo procesamiento para la cámara y para la prueba con una imagen."""
+def process_frame(frame, profiles, tolerance, csv_path, service=None):
+    """Reconocer y dibujar todos los rostros; registrar solo los conocidos."""
     annotated = frame.copy()
-    observations = []
-    # No permitir que un perfil desactivado compita con los perfiles activos.
-    profiles = [profile for profile in profiles if is_active(profile)]
+    # Reducir la imagen para agilizar la detección y restaurar las coordenadas.
     scale = min(1., 640 / max(frame.shape[:2]))
     working = cv2.resize(frame, None, fx=scale, fy=scale) if scale < 1 else frame
-    faces = detect_faces(working)
-    for detected in faces:
+    if service is not None:
+        profiles = service.profiles()
+    for detected in detect_faces(working):
         face = Face(tuple(int(round(value / scale)) for value in detected.location), detected.encoding)
-        index, distance = best_match(face.encoding, profiles, tolerance)
+        index, _ = best_match(face.encoding, profiles, tolerance)
         if index is None:
-            label = "Desconocido"
-            draw_face(annotated, face, label, False)
-            observations.append(dict(name=label, allowed=False, registered=False, distance=distance))
+            draw_face(annotated, face, "Desconocido", False)
             continue
         profile = profiles[index]
-        # Verificación adicional inmediatamente antes de guardar el ingreso.
-        if not is_active(profile):
-            draw_face(annotated, face, "Inactivo", False)
-            observations.append(dict(name="Inactivo", allowed=False, registered=False, distance=distance))
-            continue
-        added = record_attendance(profile.employee_id, profile.name, csv_path, now=now, origin=origin)
-        label = profile.name + (" - Registrado" if added else " - Ya registrado hoy")
-        draw_face(annotated, face, label, True)
-        if added:
+        if service is not None:
+            try:
+                registered = service.register(profile, origin="webcam")
+            except InactiveEmployeeError:
+                draw_face(annotated, face, "Empleado inactivo", False)
+                continue
+        else:
+            identity = profile.employee_id or "archivo:" + profile.name.casefold()
+            registered = record_attendance(identity, profile.name, csv_path, origin="carpeta")
+        if registered:
             print(f"Asistencia registrada: {profile.name}")
-        observations.append(dict(name=profile.name, allowed=True, registered=added, distance=distance))
-    return annotated, observations
+        draw_face(annotated, face, profile.name, True)
+    return annotated
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fuente", choices=["base", "carpeta"], default="base", help="base reutiliza las fotos del panel; carpeta usa nombres de archivo.")
+    parser.add_argument("--fuente", choices=["base", "carpeta"], default="base", help="base: empleados del panel; carpeta: fotos por nombre.")
+    parser.add_argument("--base", type=Path, default=DATABASE_PATH)
     parser.add_argument("--empleados", type=Path, default=BASE_DIR / "empleados")
     parser.add_argument("--csv", type=Path, default=DEFAULT_CSV)
     parser.add_argument("--camara", type=int, default=0)
     parser.add_argument("--tolerancia", type=float, default=0.6)
-    parser.add_argument("--cada", type=int, default=3, help="Procesar uno de cada N cuadros para reducir uso de CPU.")
-    parser.add_argument("--max-fotogramas", type=int, default=0, help="0: sin límite; otro valor permite una prueba acotada.")
-    parser.add_argument("--sin-ventana", action="store_true")
-    parser.add_argument("--imagen", type=Path, help="Prueba del mismo flujo sobre una imagen, sin abrir la cámara.")
-    parser.add_argument("--salida", type=Path, default=BASE_DIR / "data/asistencia_prueba.jpg")
     args = parser.parse_args(argv)
     capture = None
     try:
-        if not 0 < args.tolerancia <= 1 or args.cada < 1 or args.max_fotogramas < 0:
-            raise ValueError("Usá tolerancia en (0, 1], --cada >= 1 y --max-fotogramas >= 0.")
-        if args.sin_ventana and not args.imagen and not args.max_fotogramas:
-            raise ValueError("La prueba de cámara sin ventana necesita --max-fotogramas para poder terminar.")
-        profiles, warnings = load_profiles(args.fuente, args.empleados)
+        if not 0 < args.tolerancia <= 1:
+            raise ValueError("La tolerancia debe ser mayor que 0 y menor o igual a 1.")
+        service = None
+        if args.fuente == "base":
+            service = AttendanceService(EmployeeRepository(args.base), args.csv, args.tolerancia)
+            profiles, warnings = service.profiles(), []
+        else:
+            profiles, warnings = load_profiles(args.empleados)
         for warning in warnings:
             print(f"Foto omitida: {warning}")
         if not profiles:
-            raise ValueError("No hay empleados con fotos válidas. Cargalos en el panel o en la carpeta indicada.")
-        print(f"Perfiles cargados: {len(profiles)}. CSV: {args.csv}")
-        if args.imagen:
-            image, observations = process_frame(read_image(args.imagen), profiles, args.tolerancia, args.csv, origin="imagen")
-            save_image(args.salida, image)
-            for item in observations:
-                print(f"{item['name']} | Reconocido: {item['allowed']} | Distancia: {item['distance']}")
-            print(f"Resultado guardado: {args.salida}")
-            return 0
+            raise ValueError("No hay empleados con fotos válidas. Cargá sus fotos en el panel o usá --fuente carpeta.")
+        print(f"Empleados cargados: {len(profiles)}. CSV: {args.csv}")
         capture = cv2.VideoCapture(args.camara)
         if not capture.isOpened():
-            raise ValueError("No se pudo abrir la webcam. Cerrá otras apps que la usen y revisá --camara 0 o 1 y los permisos de Windows.")
-        print("Cámara iniciada. Q o Escape para salir. Reiniciá el programa si agregás o actualizás fotos.")
-        count = 0
-        display = None
+            raise ValueError("No se pudo abrir la webcam. Revisá los permisos o probá --camara 1.")
+        print("Cámara iniciada. Q o Escape para salir. Los empleados del panel se actualizan en cada captura.")
         while True:
             ok, frame = capture.read()
             if not ok or frame is None:
                 raise ValueError("La cámara dejó de entregar imágenes.")
-            if count % args.cada == 0:
-                display, _ = process_frame(frame, profiles, args.tolerancia, args.csv)
-            # Mostrar el último cuadro procesado para no dibujar cajas sobre otro instante.
-            if not args.sin_ventana:
-                cv2.imshow("Asistencia - Q o Escape para salir", display)
-                if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
-                    break
-            count += 1
-            if args.max_fotogramas and count >= args.max_fotogramas:
+            display = process_frame(frame, profiles, args.tolerancia, args.csv, service)
+            cv2.imshow("Asistencia - Q o Escape para salir", display)
+            if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                 break
         return 0
     except (ValueError, RuntimeError, OSError, cv2.error) as error:
@@ -105,8 +87,7 @@ def main(argv=None):
     finally:
         if capture is not None:
             capture.release()
-        if not args.sin_ventana:
-            cv2.destroyAllWindows()
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":

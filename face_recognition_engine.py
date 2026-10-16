@@ -1,12 +1,8 @@
-"""Motor de los dos scripts de la consigna: face_recognition + OpenCV.
-
-Sus vectores de 128 valores NO se mezclan con los de InsightFace del panel.
-"""
+"""Funciones compartidas de reconocimiento facial y visualización."""
 from __future__ import annotations
 
 import os
 import unicodedata
-from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,10 +21,9 @@ class Face:
 
 @dataclass
 class Profile:
-    employee_id: str
     name: str
     encoding: np.ndarray
-    from_database: bool = False
+    employee_id: str | None = None
 
 
 def _compatible_model_path(path: str) -> str:
@@ -78,7 +73,7 @@ def face_library():
     except ImportError as error:
         raise RuntimeError(
             "Falta face_recognition o alguna dependencia. Ejecutá install_windows.ps1 "
-            "o instalá requirements-asistencia.txt con el Python de .venv."
+            "o instalá requirements.txt con el Python de .venv."
         ) from error
     _library = fr
     return fr
@@ -90,9 +85,14 @@ def read_image(path: str | Path) -> np.ndarray:
         content = Path(path).read_bytes()
     except OSError as error:
         raise ValueError(f"No se pudo abrir la imagen: {path}") from error
+    return decode_image(content)
+
+
+def decode_image(content: bytes) -> np.ndarray:
+    """Decodificar fotos de archivos y capturas del navegador del mismo modo."""
     image = cv2.imdecode(np.frombuffer(content, dtype=np.uint8), cv2.IMREAD_COLOR) if content else None
     if image is None:
-        raise ValueError(f"El archivo no contiene una imagen válida: {path}")
+        raise ValueError("El archivo no contiene una imagen válida.")
     return image
 
 
@@ -125,45 +125,27 @@ def best_match(encoding: np.ndarray, profiles: list[Profile], tolerance: float =
     return (index if matches[0] else None), distance
 
 
-def load_profiles(source: str, folder: str | Path) -> tuple[list[Profile], list[str]]:
+def load_profiles(folder: str | Path) -> tuple[list[Profile], list[str]]:
+    """Cargar una foto por empleado; el nombre se obtiene del archivo."""
     profiles, warnings = [], []
-    if source == "base":
-        from database import DATABASE_PATH
-        import sqlite3
-        if not DATABASE_PATH.exists():
-            raise ValueError("Primero abrí el panel y cargá empleados con sus fotos, o usá --fuente carpeta.")
-        with closing(sqlite3.connect(DATABASE_PATH)) as db:
-            entries = [(str(row[0]), row[1], BASE_DIR / row[2], True) for row in db.execute(
-                """SELECT employees.id, full_name, source_image_path FROM employees
-                   JOIN biometric_profiles ON employee_id = employees.id
-                   WHERE status = 'active' AND source_image_path IS NOT NULL"""
-            )]
-    elif source == "carpeta":
-        folder = Path(folder)
-        if not folder.is_dir():
-            raise ValueError(f"No existe la carpeta de empleados: {folder}")
-        entries = [("archivo:" + Path(name).stem.casefold(), Path(name).stem.replace("_", " "),
-                    folder / name, False) for name in sorted(os.listdir(folder))
-                   if Path(name).suffix.lower() in {".jpg", ".jpeg", ".png"} and (folder / name).is_file()]
-    else:
-        raise ValueError("La fuente debe ser base o carpeta.")
-    for employee_id, name, path, from_database in entries:
+    folder = Path(folder)
+    if not folder.is_dir():
+        raise ValueError(f"No existe la carpeta de empleados: {folder}")
+    names = set()
+    for filename in sorted(os.listdir(folder)):
+        path = folder / filename
+        if path.suffix.lower() not in {".jpg", ".jpeg", ".png"} or not path.is_file():
+            continue
+        name = path.stem.replace("_", " ").strip()
         try:
+            if not name or name.casefold() in names:
+                raise ValueError("Usá un nombre único y no vacío por empleado.")
             face = single_face(read_image(path))
-            profiles.append(Profile(employee_id, name, face.encoding, from_database))
+            profiles.append(Profile(name, face.encoding, "archivo:" + name.casefold()))
+            names.add(name.casefold())
         except (ValueError, OSError) as error:
-            warnings.append(f"{name}: {error}")
+            warnings.append(f"{filename}: {error}")
     return profiles, warnings
-
-
-def is_active(profile: Profile) -> bool:
-    if not profile.from_database:
-        return True
-    from database import DATABASE_PATH
-    import sqlite3
-    with closing(sqlite3.connect(DATABASE_PATH)) as db:
-        row = db.execute("SELECT status FROM employees WHERE id = ?", (profile.employee_id,)).fetchone()
-    return row is not None and row[0] == "active"
 
 
 def ascii_text(text: str) -> str:
@@ -188,14 +170,3 @@ def draw_face(image: np.ndarray, face: Face, label: str, allowed: bool) -> None:
                 (0, 0, 0), thickness + 3, cv2.LINE_AA)
     cv2.putText(image, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale,
                 color, thickness, cv2.LINE_AA)
-
-
-def save_image(path: str | Path, image: np.ndarray) -> None:
-    path = Path(path)
-    if path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
-        raise ValueError("La salida debe terminar en .jpg, .jpeg o .png.")
-    success, encoded = cv2.imencode(path.suffix, image)
-    if not success:
-        raise ValueError("No se pudo generar la imagen de resultado.")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(encoded.tobytes())

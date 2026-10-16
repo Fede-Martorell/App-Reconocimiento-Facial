@@ -3,25 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Acceso facial{% endblock %}</title>
+  <title>{% block title %}Asistencias{% endblock %} · Gestión de personal</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="{{ url_for('dashboard') }}">Control de Acceso</a>
-    <nav>
+    <a class="brand" href="{{ url_for('dashboard') }}">Asistencias · Empresas</a>
+    <nav aria-label="Navegación principal">
       <a href="{{ url_for('dashboard') }}">Panel</a>
       <a href="{{ url_for('employees') }}">Personal</a>
-      <a href="{{ url_for('access') }}">Molinete</a>
+      <a href="{{ url_for('access') }}">Registrar ingreso</a>
       <a href="{{ url_for('attendance') }}">Asistencias</a>
     </nav>
   </header>
   <main class="container">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}
-    {% endwith %}
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      <div class="flash {{ category }}" role="status">{{ message }}</div>
+    {% endfor %}
     {% block content %}{% endblock %}
   </main>
+  {% block scripts %}{% endblock %}
 </body>
 </html>
-

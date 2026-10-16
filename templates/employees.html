@@ -1,10 +1,41 @@
 {% extends 'base.html' %}
 {% block title %}Personal{% endblock %}
 {% block content %}
-<section class="page-heading"><div><p class="eyebrow">Administración</p><h1>Personal autorizado</h1><p>El estado inactivo impide cualquier acceso, incluso si el rostro está registrado.</p></div><a class="button" href="{{ url_for('new_employee') }}">+ Cargar personal</a></section>
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Administración</p>
+    <h1>Personal de la empresa</h1>
+    <p>Solo los empleados activos con una foto cargada pueden registrar su ingreso.</p>
+  </div>
+  <a class="button" href="{{ url_for('new_employee') }}">+ Cargar personal</a>
+</section>
 <section class="card">
-{% if employees %}<div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Email</th><th>Biometría</th><th>Estado</th><th>Acción</th></tr></thead><tbody>
-{% for employee in employees %}<tr><td><strong>{{ employee.full_name }}</strong></td><td>{{ employee.email or '—' }}</td><td>{{ 'Cargada' if employee.biometric_id else 'Pendiente' }}</td><td><span class="badge {{ employee.status }}">{{ 'Activo' if employee.status == 'active' else 'Inactivo' }}</span></td><td><a href="{{ url_for('enroll_employee', employee_id=employee.id) }}">{{ 'Actualizar foto' if employee.biometric_id else 'Cargar biometría' }}</a><form method="post" action="{{ url_for('toggle_status', employee_id=employee.id) }}"><button class="link-button" type="submit">{{ 'Desactivar' if employee.status == 'active' else 'Activar' }}</button></form></td></tr>{% endfor %}
-</tbody></table></div>{% else %}<p class="empty">Aún no cargaste personal. Agrega una persona para comenzar.</p>{% endif %}
+  {% if employees %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ID</th><th>Nombre</th><th>Email</th><th>Foto facial</th><th>Estado</th><th>Acciones</th></tr></thead>
+      <tbody>
+        {% for employee in employees %}
+        <tr>
+          <td>{{ employee.id }}</td>
+          <td><strong>{{ employee.full_name }}</strong></td>
+          <td>{{ employee.email or '—' }}</td>
+          <td>{{ 'Cargada' if employee.biometric_id else 'Pendiente' }}</td>
+          <td><span class="badge {{ employee.status }}">{{ 'Activo' if employee.status == 'active' else 'Inactivo' }}</span></td>
+          <td>
+            <a href="{{ url_for('enroll_employee', employee_id=employee.id) }}">{{ 'Actualizar foto' if employee.biometric_id else 'Cargar foto' }}</a>
+            <form method="post" action="{{ url_for('toggle_status', employee_id=employee.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button class="link-button" type="submit">{{ 'Desactivar' if employee.status == 'active' else 'Activar' }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <p class="empty">Todavía no hay empleados. Cargá una persona para comenzar.</p>
+  {% endif %}
 </section>
 {% endblock %}

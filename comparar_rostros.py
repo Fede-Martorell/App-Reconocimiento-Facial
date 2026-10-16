@@ -5,15 +5,14 @@ import argparse
 from pathlib import Path
 
 import cv2
-import numpy as np
 
-from face_recognition_engine import Face, Profile, best_match, draw_face, read_image, save_image, single_face
+from face_recognition_engine import Face, Profile, best_match, draw_face, read_image, single_face
 
 
 def compare_images(control_path, test_path, tolerance=0.6):
     control, test = read_image(control_path), read_image(test_path)
     control_face, test_face = single_face(control), single_face(test)
-    index, distance = best_match(test_face.encoding, [Profile("control", "Control", control_face.encoding)], tolerance)
+    index, distance = best_match(test_face.encoding, [Profile("Control", control_face.encoding)], tolerance)
     match = index is not None
     panels = []
     for image, face, label, allowed in ((control, control_face, "Control", True),
@@ -39,24 +38,18 @@ def main(argv=None):
     parser.add_argument("control", type=Path, help="Foto de control con un rostro.")
     parser.add_argument("prueba", type=Path, help="Foto de prueba con un rostro.")
     parser.add_argument("--tolerancia", type=float, default=0.6, help="Distancia máxima; no es un porcentaje.")
-    parser.add_argument("--salida", type=Path, default=Path(__file__).resolve().parent / "data/comparacion.jpg")
-    parser.add_argument("--sin-ventana", action="store_true", help="Guardar el resultado sin abrir una ventana.")
     args = parser.parse_args(argv)
     try:
         match, distance, image = compare_images(args.control, args.prueba, args.tolerancia)
-        save_image(args.salida, image)
         print(f"{'COINCIDE' if match else 'NO COINCIDE'} | Distancia: {distance:.4f} | Tolerancia: {args.tolerancia:.2f}")
-        print(f"Imagen de resultado: {args.salida}")
-        if not args.sin_ventana:
-            cv2.imshow("Comparacion de rostros - pulse una tecla para salir", image)
-            cv2.waitKey(0)
+        cv2.imshow("Comparacion de rostros - pulse una tecla para salir", image)
+        cv2.waitKey(0)
         return 0
     except (ValueError, RuntimeError, OSError, cv2.error) as error:
         print(f"Error: {error}")
         return 1
     finally:
-        if not args.sin_ventana:
-            cv2.destroyAllWindows()
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block title %}Revisar solicitud{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>No se pudo procesar la solicitud</h1>
+  <p>{{ message }}</p>
+  <a href="{{ url_for('dashboard') }}">Volver al panel</a>
+</section>
+{% endblock %}

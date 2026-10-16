@@ -1,12 +1,32 @@
 {% extends 'base.html' %}
 {% block title %}Cargar personal{% endblock %}
 {% block content %}
-<section class="form-card"><p class="eyebrow">Administración</p><h1>Cargar nuevo personal</h1><p>La foto debe mostrar un solo rostro, de frente y con buena iluminación.</p>
-<form method="post" enctype="multipart/form-data" class="form-grid">
-  <label>Nombre completo<input name="full_name" required maxlength="120" autofocus></label>
-  <label>Email<input name="email" type="email" maxlength="160"></label>
-  <label>Estado inicial<select name="status"><option value="active">Activo: puede acceder</option><option value="inactive">Inactivo: acceso bloqueado</option></select></label>
-  <label>Foto para enrolamiento <small>JPG o PNG, hasta 5 MB. En celular permite tomarla con la cámara.</small><input name="photo" type="file" accept="image/png,image/jpeg" capture="user"></label>
-  <div class="form-actions"><a href="{{ url_for('employees') }}">Cancelar</a><button class="button" type="submit">Guardar personal</button></div>
-</form></section>
+<section class="form-card">
+  <p class="eyebrow">Administración</p>
+  <h1>Cargar personal</h1>
+  <p>Podés cargar la foto ahora o completar ese paso después.</p>
+  <form method="post" enctype="multipart/form-data" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Nombre completo
+      <input name="full_name" required maxlength="120" value="{{ request.form.get('full_name', '') }}" autofocus>
+    </label>
+    <label>Email
+      <input name="email" type="email" maxlength="160" value="{{ request.form.get('email', '') }}">
+    </label>
+    <label>Estado inicial
+      <select name="status">
+        <option value="active">Activo</option>
+        <option value="inactive" {{ 'selected' if request.form.get('status') == 'inactive' else '' }}>Inactivo</option>
+      </select>
+    </label>
+    <label>Foto facial (opcional)
+      <small>JPG o PNG, hasta 5 MB. Un solo rostro, de frente y con buena iluminación.</small>
+      <input name="photo" type="file" accept="image/png,image/jpeg">
+    </label>
+    <div class="form-actions">
+      <a href="{{ url_for('employees') }}">Cancelar</a>
+      <button class="button" type="submit">Guardar personal</button>
+    </div>
+  </form>
+</section>
 {% endblock %}

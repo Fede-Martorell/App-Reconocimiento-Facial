@@ -1,9 +1,35 @@
 {% extends 'base.html' %}
 {% block title %}Asistencias{% endblock %}
 {% block content %}
-<section class="page-heading"><div><p class="eyebrow">Sistema de asistencias</p><h1>Registro de ingresos</h1><p>Primer ingreso de cada persona por día, en la fecha y hora local del equipo.</p></div><a class="button" href="{{ url_for('download_attendance') }}">Descargar CSV</a></section>
-<section class="card"><h2>Últimos registros</h2><p>La web y el programa de webcam comparten el archivo de asistencias. Actualizá esta página para ver nuevos ingresos.</p>
-{% if rows %}<div class="table-wrap"><table><thead><tr><th>Persona</th><th>Fecha</th><th>Hora de ingreso</th><th>Origen</th></tr></thead><tbody>
-{% for row in rows %}<tr><td>{{ row.nombre }}</td><td>{{ row.fecha }}</td><td>{{ row.hora }}</td><td>{{ row.origen }}</td></tr>{% endfor %}
-</tbody></table></div>{% else %}<p class="empty">Todavía no se registraron asistencias.</p>{% endif %}</section>
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Control de asistencia</p>
+    <h1>Registro de ingresos</h1>
+    <p>Primer ingreso de cada empleado por día, con la fecha y hora local del equipo.</p>
+  </div>
+  <a class="button" href="{{ url_for('download_attendance', fecha=date) }}">Descargar CSV</a>
+</section>
+<section class="card">
+  <form method="get" class="filter-form">
+    <label>Fecha <input type="date" name="fecha" value="{{ date }}"></label>
+    <button class="button" type="submit">Filtrar</button>
+    <a href="{{ url_for('attendance') }}">Ver todas</a>
+  </form>
+  {% if rows %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ID</th><th>Empleado</th><th>Fecha</th><th>Hora de ingreso</th><th>Origen</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.empleado_id }}</td><td>{{ row.nombre }}</td><td>{{ row.fecha }}</td><td>{{ row.hora }}</td><td>{{ row.origen }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <p class="empty">No hay asistencias para mostrar.</p>
+  {% endif %}
+</section>
 {% endblock %}

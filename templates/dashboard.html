@@ -2,21 +2,41 @@
 {% block title %}Panel administrador{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div><p class="eyebrow">Sprint 1</p><h1>Panel de administración</h1><p>Gestiona las personas autorizadas y supervisa los últimos accesos.</p></div>
+  <div>
+    <p class="eyebrow">Sistema de asistencias</p>
+    <h1>Panel de administración</h1>
+    <p>Gestioná el personal y supervisá los últimos intentos de registro.</p>
+  </div>
   <a class="button" href="{{ url_for('new_employee') }}">+ Cargar personal</a>
 </section>
 <section class="metrics">
   <article><span>Personal registrado</span><strong>{{ metrics.employees }}</strong></article>
   <article><span>Personal activo</span><strong>{{ metrics.active }}</strong></article>
-  <article><span>Biometrías cargadas</span><strong>{{ metrics.enrolled }}</strong></article>
+  <article><span>Fotos faciales cargadas</span><strong>{{ metrics.enrolled }}</strong></article>
 </section>
 <section class="card">
-  <div class="section-title"><h2>Últimos accesos</h2><a href="{{ url_for('access') }}">Probar molinete</a></div>
+  <div class="section-title">
+    <h2>Últimas verificaciones</h2>
+    <a href="{{ url_for('access') }}">Registrar ingreso</a>
+  </div>
   {% if logs %}
-  <div class="table-wrap"><table><thead><tr><th>Hora</th><th>Persona</th><th>Resultado</th><th>Detalle</th></tr></thead><tbody>
-    {% for log in logs %}<tr><td>{{ log.created_at }}</td><td>{{ log.full_name or 'Desconocido' }}</td><td><span class="badge {{ log.result }}">{{ 'Permitido' if log.result == 'allowed' else 'Denegado' }}</span></td><td>{{ log.detail }}</td></tr>{% endfor %}
-  </tbody></table></div>
-  {% else %}<p class="empty">Todavía no hay intentos de acceso registrados.</p>{% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Fecha y hora</th><th>Persona</th><th>Resultado</th><th>Detalle</th></tr></thead>
+      <tbody>
+        {% for log in logs %}
+        <tr>
+          <td>{{ log.created_at }}</td>
+          <td>{{ log.full_name or 'Desconocido' }}</td>
+          <td><span class="badge {{ log.result }}">{{ 'Verificado' if log.result == 'allowed' else 'No verificado' }}</span></td>
+          <td>{{ log.detail }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <p class="empty">Todavía no hay intentos de ingreso registrados.</p>
+  {% endif %}
 </section>
 {% endblock %}
-

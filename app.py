@@ -1,243 +1,163 @@
+"""Panel Flask: formularios y respuestas HTTP; las reglas están en services.py."""
 from __future__ import annotations
 
 import base64
+import binascii
+import csv
 import os
-from datetime import datetime, timezone
+import secrets
+from io import BytesIO, StringIO
 from pathlib import Path
 
-from flask import Flask, flash, redirect, render_template, request, send_file, url_for
-from werkzeug.utils import secure_filename
+from flask import Flask, abort, flash, redirect, render_template, request, send_file, session, url_for
 
-from attendance_log import DEFAULT_CSV, read_attendance, record_attendance
-from database import get_connection, initialize_database, query_all, query_one
-from recognition_engine import RecognitionUnavailable, encoding_from_image, find_match
-
-
-BASE_DIR = Path(__file__).resolve().parent
-UPLOADS_DIR = BASE_DIR / "uploads"
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
-ENCODING_MODEL = "insightface_512"
-
-app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", "cambiar-antes-de-produccion")
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
-app.config["ATTENDANCE_CSV"] = DEFAULT_CSV
+from attendance_log import DEFAULT_CSV, FIELDS
+from database import DATABASE_PATH, EmployeeRepository
+from services import AttendanceDecision, AttendanceService
 
 
-def allowed_file(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
-def write_access_log(employee_id: int | None, result: str, detail: str) -> None:
-    with get_connection() as db:
-        db.execute(
-            "INSERT INTO access_logs (employee_id, result, detail) VALUES (?, ?, ?)",
-            (employee_id, result, detail),
-        )
-
-
-def save_biometric_profile(employee_id: int, photo) -> None:
-    """Create or replace the facial template for one employee."""
-    if not photo or not photo.filename:
-        raise ValueError("Seleccioná una foto para cargar la biometría.")
-    if not allowed_file(photo.filename):
-        raise ValueError("La foto debe ser JPG o PNG.")
-
-    UPLOADS_DIR.mkdir(exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    photo_path = UPLOADS_DIR / f"{employee_id}_{stamp}_{secure_filename(photo.filename)}"
-    try:
-        photo.save(photo_path)
-        encoding = encoding_from_image(str(photo_path))
-    except Exception:
-        if photo_path.exists():
-            photo_path.unlink()
-        raise
-
-    with get_connection() as db:
-        db.execute(
-            """INSERT INTO biometric_profiles (employee_id, face_encoding, encoding_model, source_image_path)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(employee_id) DO UPDATE SET
-                 face_encoding = excluded.face_encoding,
-                 encoding_model = excluded.encoding_model,
-                 source_image_path = excluded.source_image_path,
-                 enrolled_at = CURRENT_TIMESTAMP""",
-            (employee_id, encoding, ENCODING_MODEL, str(photo_path.relative_to(BASE_DIR))),
-        )
-
-
-@app.get("/")
-def dashboard():
-    metrics = {
-        "employees": query_one("SELECT COUNT(*) AS value FROM employees")["value"],
-        "active": query_one("SELECT COUNT(*) AS value FROM employees WHERE status = 'active'")["value"],
-        "enrolled": query_one("SELECT COUNT(*) AS value FROM biometric_profiles WHERE face_encoding IS NOT NULL")["value"],
-    }
-    logs = query_all(
-        """SELECT access_logs.*, employees.full_name FROM access_logs
-           LEFT JOIN employees ON employees.id = access_logs.employee_id
-           ORDER BY access_logs.id DESC LIMIT 8"""
+def create_app(config=None):
+    """Crear una aplicación con rutas de datos configurables y aislables en pruebas."""
+    app = Flask(__name__)
+    app.config.from_mapping(
+        SECRET_KEY=os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32),
+        MAX_CONTENT_LENGTH=5 * 1024 * 1024,
+        DATABASE_PATH=DATABASE_PATH,
+        ATTENDANCE_CSV=DEFAULT_CSV,
+        FACE_TOLERANCE=0.6,
     )
-    return render_template("dashboard.html", metrics=metrics, logs=logs)
+    if config:
+        app.config.update(config)
+    repository = EmployeeRepository(app.config["DATABASE_PATH"])
+    service = AttendanceService(repository, app.config["ATTENDANCE_CSV"], app.config["FACE_TOLERANCE"])
+    app.extensions["attendance_service"] = service
 
+    @app.context_processor
+    def form_token():
+        return {"csrf_token": session.setdefault("csrf_token", secrets.token_hex(32))}
 
-@app.get("/employees")
-def employees():
-    rows = query_all(
-        """SELECT employees.*,
-                  CASE WHEN biometric_profiles.encoding_model = ? OR biometric_profiles.encoding_model IS NULL THEN biometric_profiles.id END AS biometric_id
-           FROM employees LEFT JOIN biometric_profiles ON biometric_profiles.employee_id = employees.id
-           ORDER BY employees.full_name""",
-        (ENCODING_MODEL,),
-    )
-    return render_template("employees.html", employees=rows)
+    @app.before_request
+    def validate_form_token():
+        if request.method == "POST":
+            expected = session.get("csrf_token", "")
+            received = request.form.get("csrf_token", "")
+            if not expected or not secrets.compare_digest(expected.encode(), received.encode()):
+                abort(400, "El formulario venció. Volvé a cargar la página.")
 
+    @app.errorhandler(413)
+    def upload_too_large(error):
+        return render_template("error.html", message="La imagen supera el límite de 5 MB."), 413
 
-@app.route("/employees/new", methods=["GET", "POST"])
-def new_employee():
-    if request.method == "GET":
-        return render_template("employee_form.html")
+    @app.errorhandler(400)
+    def invalid_request(error):
+        return render_template("error.html", message=error.description), 400
 
-    full_name = request.form.get("full_name", "").strip()
-    email = request.form.get("email", "").strip() or None
-    status = request.form.get("status", "active")
-    photo = request.files.get("photo")
-    if not full_name:
-        flash("El nombre completo es obligatorio.", "error")
-        return redirect(url_for("new_employee"))
-    if status not in {"active", "inactive"}:
-        flash("Estado no valido.", "error")
-        return redirect(url_for("new_employee"))
-
-    try:
-        with get_connection() as db:
-            cursor = db.execute(
-                "INSERT INTO employees (full_name, email, status) VALUES (?, ?, ?)",
-                (full_name, email, status),
-            )
-            employee_id = cursor.lastrowid
+    def photo_bytes():
+        photo = request.files.get("photo")
         if photo and photo.filename:
-            save_biometric_profile(employee_id, photo)
-            flash("Personal registrado y biometria cargada.", "success")
-        else:
-            flash("Personal registrado. Falta cargar una foto para habilitar el reconocimiento.", "success")
-        return redirect(url_for("employees"))
-    except (ValueError, RecognitionUnavailable, OSError) as error:
-        # Keep the employee record: it is useful for an administrator to complete enrollment later.
-        flash(f"Personal creado, pero no se pudo cargar la biometria: {error}", "error")
-        return redirect(url_for("employees"))
-    except Exception as error:
-        flash(f"No se pudo crear el empleado: {error}", "error")
-        return redirect(url_for("new_employee"))
-
-
-@app.post("/employees/<int:employee_id>/toggle-status")
-def toggle_status(employee_id: int):
-    employee = query_one("SELECT status FROM employees WHERE id = ?", (employee_id,))
-    if employee is None:
-        flash("Empleado inexistente.", "error")
-    else:
-        new_status = "inactive" if employee["status"] == "active" else "active"
-        deactivated_at = datetime.now(timezone.utc).isoformat() if new_status == "inactive" else None
-        with get_connection() as db:
-            db.execute("UPDATE employees SET status = ?, deactivated_at = ? WHERE id = ?", (new_status, deactivated_at, employee_id))
-        flash(f"Estado actualizado a {'Activo' if new_status == 'active' else 'Inactivo'}.", "success")
-    return redirect(url_for("employees"))
-
-
-@app.route("/employees/<int:employee_id>/enroll", methods=["GET", "POST"])
-def enroll_employee(employee_id: int):
-    employee = query_one("SELECT * FROM employees WHERE id = ?", (employee_id,))
-    if employee is None:
-        flash("Empleado inexistente.", "error")
-        return redirect(url_for("employees"))
-    if request.method == "GET":
-        return render_template("enroll.html", employee=employee)
-
-    try:
-        save_biometric_profile(employee_id, request.files.get("photo"))
-        flash("Biometría facial cargada correctamente.", "success")
-        return redirect(url_for("employees"))
-    except (ValueError, RecognitionUnavailable, OSError) as error:
-        flash(f"No se pudo cargar la biometría: {error}", "error")
-        return redirect(url_for("enroll_employee", employee_id=employee_id))
-
-
-@app.route("/access", methods=["GET", "POST"])
-def access():
-    decision = None
-    if request.method == "POST":
+            if Path(photo.filename).suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+                raise ValueError("La foto debe ser JPG o PNG.")
+            return photo.read()
         snapshot = request.form.get("snapshot", "")
-        try:
+        if snapshot.startswith("data:image/") and "," in snapshot:
+            try:
+                return base64.b64decode(snapshot.split(",", 1)[1], validate=True)
+            except binascii.Error as error:
+                raise ValueError("La captura de cámara es inválida.") from error
+        raise ValueError("Seleccioná una foto o capturá una imagen.")
+
+    @app.get("/")
+    def dashboard():
+        return render_template("dashboard.html", metrics=repository.metrics(), logs=repository.recent_accesses())
+
+    @app.get("/employees")
+    def employees():
+        return render_template("employees.html", employees=repository.list_employees())
+
+    @app.route("/employees/new", methods=["GET", "POST"])
+    def new_employee():
+        if request.method == "POST":
+            try:
+                employee_id = service.create_employee(
+                    request.form.get("full_name", ""), request.form.get("email", ""),
+                    request.form.get("status", "active"),
+                )
+            except ValueError as error:
+                flash(str(error), "error")
+                return render_template("employee_form.html"), 400
+            # El alta de personal es independiente: se puede completar la foto después.
             photo = request.files.get("photo")
             if photo and photo.filename:
-                if not allowed_file(photo.filename):
-                    raise ValueError("La foto debe ser JPG o PNG.")
-                image_bytes = photo.read()
-            elif snapshot.startswith("data:image/") and "," in snapshot:
-                image_bytes = base64.b64decode(snapshot.split(",", 1)[1])
+                try:
+                    service.enroll(employee_id, photo_bytes())
+                    flash("Empleado registrado y foto cargada.", "success")
+                except (ValueError, RuntimeError, OSError) as error:
+                    flash(f"Empleado creado; falta completar su foto: {error}", "error")
             else:
-                raise ValueError("Captura o carga una imagen antes de verificar.")
-            profiles = query_all(
-                """SELECT biometric_profiles.face_encoding, employees.id AS employee_id, employees.full_name
-                   FROM biometric_profiles JOIN employees ON employees.id = biometric_profiles.employee_id
-                   WHERE employees.status = 'active'
-                     AND biometric_profiles.face_encoding IS NOT NULL
-                     AND (biometric_profiles.encoding_model = ? OR biometric_profiles.encoding_model IS NULL)""",
-                (ENCODING_MODEL,),
-            )
-            employee_id, distance = find_match(image_bytes, profiles)
-            if employee_id is None:
-                write_access_log(None, "denied", "Rostro no identificado o no autorizado")
-                decision = {"result": "denied", "message": "Acceso denegado", "distance": distance}
-            else:
-                employee = query_one("SELECT full_name FROM employees WHERE id = ?", (employee_id,))
-                # La asistencia diaria se comparte con el script de webcam.
-                registered = record_attendance(employee_id, employee["full_name"], app.config["ATTENDANCE_CSV"], origin="web")
-                write_access_log(employee_id, "allowed", "Reconocimiento facial validado")
-                decision = {"result": "allowed", "message": f"Acceso permitido: {employee['full_name']}", "distance": distance,
-                            "attendance": "Asistencia registrada." if registered else "Ya registraste asistencia hoy."}
-        except (ValueError, RecognitionUnavailable, OSError) as error:
-            write_access_log(None, "denied", str(error))
-            decision = {"result": "denied", "message": str(error), "distance": None}
-    return render_template("access.html", decision=decision)
+                flash("Empleado creado. Cargá su foto para habilitar el reconocimiento.", "success")
+            return redirect(url_for("employees"))
+        return render_template("employee_form.html")
 
+    @app.post("/employees/<int:employee_id>/toggle-status")
+    def toggle_status(employee_id):
+        if repository.get_employee(employee_id) is None:
+            abort(404)
+        repository.toggle_status(employee_id)
+        flash("Estado del empleado actualizado.", "success")
+        return redirect(url_for("employees"))
 
-@app.get("/attendance")
-def attendance():
-    try:
-        rows = read_attendance(app.config["ATTENDANCE_CSV"])
-    except (ValueError, OSError) as error:
-        flash(f"No se pudo leer el registro de asistencias: {error}", "error")
-        rows = []
-    return render_template("attendance.html", rows=list(reversed(rows[-200:])))
+    @app.route("/employees/<int:employee_id>/enroll", methods=["GET", "POST"])
+    def enroll_employee(employee_id):
+        employee = repository.get_employee(employee_id)
+        if employee is None:
+            abort(404)
+        if request.method == "POST":
+            try:
+                service.enroll(employee_id, photo_bytes())
+            except (ValueError, RuntimeError, OSError) as error:
+                flash(f"No se pudo cargar la foto: {error}", "error")
+                return render_template("enroll.html", employee=employee), 400
+            flash("Foto facial actualizada.", "success")
+            return redirect(url_for("employees"))
+        return render_template("enroll.html", employee=employee)
 
+    @app.route("/access", methods=["GET", "POST"])
+    def access():
+        decision = None
+        if request.method == "POST":
+            try:
+                decision = service.verify(photo_bytes())
+            except (ValueError, RuntimeError, OSError) as error:
+                repository.log_access(None, "denied", str(error))
+                decision = AttendanceDecision("denied", str(error))
+        return render_template("access.html", decision=decision)
 
-@app.get("/attendance.csv")
-def download_attendance():
-    path = Path(app.config["ATTENDANCE_CSV"])
-    if not path.exists():
-        flash("Todavía no hay asistencias para descargar.", "error")
-        return redirect(url_for("attendance"))
-    # Generar una copia consistente evita descargar una fila mientras se escribe.
-    import csv
-    from io import BytesIO, StringIO
-    try:
-        rows = read_attendance(path)
-        from attendance_log import FIELDS
+    @app.get("/attendance")
+    def attendance():
+        date = request.args.get("fecha", "")
+        try:
+            rows = service.attendance(date)
+        except (ValueError, OSError) as error:
+            flash(f"No se pudo consultar el registro: {error}", "error")
+            rows = []
+        return render_template("attendance.html", rows=list(reversed(rows)), date=date)
+
+    @app.get("/attendance.csv")
+    def download_attendance():
+        try:
+            rows = service.attendance(request.args.get("fecha"))
+        except (ValueError, OSError) as error:
+            flash(f"No se pudo descargar el registro: {error}", "error")
+            return redirect(url_for("attendance"))
         text = StringIO(newline="")
         writer = csv.DictWriter(text, fieldnames=FIELDS)
         writer.writeheader()
         writer.writerows(rows)
         return send_file(BytesIO(text.getvalue().encode("utf-8-sig")), mimetype="text/csv",
                          as_attachment=True, download_name="asistencias.csv")
-    except (ValueError, OSError) as error:
-        flash(f"No se pudo descargar el registro: {error}", "error")
-        return redirect(url_for("attendance"))
+
+    return app
 
 
 if __name__ == "__main__":
-    initialize_database()
-    app.run(host=os.environ.get("APP_HOST", "127.0.0.1"), port=5000,
-            debug=os.environ.get("FLASK_DEBUG") == "1")
+    create_app().run(host="127.0.0.1", port=5000, debug=os.environ.get("FLASK_DEBUG") == "1")
