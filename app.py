@@ -15,6 +15,7 @@ from recognition_engine import RecognitionUnavailable, encoding_from_image, find
 BASE_DIR = Path(__file__).resolve().parent
 UPLOADS_DIR = BASE_DIR / "uploads"
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
+ENCODING_MODEL = "face_recognition_128"
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", "cambiar-antes-de-produccion")
@@ -53,13 +54,14 @@ def save_biometric_profile(employee_id: int, photo) -> None:
 
     with get_connection() as db:
         db.execute(
-            """INSERT INTO biometric_profiles (employee_id, face_encoding, source_image_path)
-               VALUES (?, ?, ?)
+            """INSERT INTO biometric_profiles (employee_id, face_encoding, encoding_model, source_image_path)
+               VALUES (?, ?, ?, ?)
                ON CONFLICT(employee_id) DO UPDATE SET
                  face_encoding = excluded.face_encoding,
+                 encoding_model = excluded.encoding_model,
                  source_image_path = excluded.source_image_path,
                  enrolled_at = CURRENT_TIMESTAMP""",
-            (employee_id, encoding, str(photo_path.relative_to(BASE_DIR))),
+            (employee_id, encoding, ENCODING_MODEL, str(photo_path.relative_to(BASE_DIR))),
         )
 
 
@@ -81,9 +83,11 @@ def dashboard():
 @app.get("/employees")
 def employees():
     rows = query_all(
-        """SELECT employees.*, biometric_profiles.id AS biometric_id
+        """SELECT employees.*,
+                  CASE WHEN biometric_profiles.encoding_model = ? THEN biometric_profiles.id END AS biometric_id
            FROM employees LEFT JOIN biometric_profiles ON biometric_profiles.employee_id = employees.id
-           ORDER BY employees.full_name"""
+           ORDER BY employees.full_name""",
+        (ENCODING_MODEL,),
     )
     return render_template("employees.html", employees=rows)
 
@@ -176,7 +180,10 @@ def access():
             profiles = query_all(
                 """SELECT biometric_profiles.face_encoding, employees.id AS employee_id, employees.full_name
                    FROM biometric_profiles JOIN employees ON employees.id = biometric_profiles.employee_id
-                   WHERE employees.status = 'active' AND biometric_profiles.face_encoding IS NOT NULL"""
+                   WHERE employees.status = 'active'
+                     AND biometric_profiles.face_encoding IS NOT NULL
+                     AND biometric_profiles.encoding_model = ?""",
+                (ENCODING_MODEL,),
             )
             employee_id, distance = find_match(image_bytes, profiles)
             if employee_id is None:

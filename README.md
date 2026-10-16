@@ -1,9 +1,11 @@
-# Control de acceso con reconocimiento facial - Sprint 1
+# Reconocimiento facial y control de asistencia - Sprint 1
 
-Prototipo local para administrar personal autorizado, registrar biometrías faciales y verificar el acceso desde una cámara web. Los datos quedan guardados en SQLite (`data/facial_access.db`), por lo que no hace falta instalar ni conectar un servidor de base de datos.
+El proyecto cumple dos consignas principales: comparar los rostros de dos imágenes y registrar asistencia en tiempo real con una cámara web. Como extensión, incluye un panel Flask para administrar personal autorizado y guardar accesos en SQLite.
 
 ## Alcance del sprint
 
+- Comparación de dos imágenes con distancia facial y resultado visual.
+- Control de asistencia por cámara web y registro en CSV.
 - Panel de administrador: alta de personal y activación/desactivación de acceso.
 - Enrolamiento con una foto que contenga exactamente un rostro.
 - Simulador de molinete desde el navegador usando la cámara.
@@ -12,12 +14,14 @@ Prototipo local para administrar personal autorizado, registrar biometrías faci
 
 ## Cómo ejecutarlo
 
-Requiere Python 3.10 o superior. En PowerShell, dentro de esta carpeta:
+Requiere Python 3.12 de 64 bits en Windows. En PowerShell, dentro de esta carpeta:
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+Set-ExecutionPolicy -Scope Process Bypass
+.\install_windows.ps1
 python app.py
 ```
 
@@ -36,23 +40,35 @@ En la computadora, ejecutá `ipconfig` y buscá la dirección IPv4 de la red Wi-
 
 En la carga de personal y en el molinete hay una opción para tomar o seleccionar una foto desde el teléfono. Esta alternativa funciona aun cuando el navegador no permite la cámara en vivo por falta de HTTPS.
 
-El comando anterior instala el panel y SQLite, que es todo lo necesario para administrar personal desde el navegador.
+El instalador de Windows usa el wheel precompilado `dlib-bin` porque `face_recognition` depende de `dlib` y su instalación oficial intenta compilar C++ en Windows.
 
-### Reconocimiento facial real (segundo paso)
+## Los dos scripts requeridos
 
-Para evitar problemas de compilación de `dlib` en Windows, el proyecto usa InsightFace y ONNX Runtime. Instalá las dependencias de visión por separado:
+### Comparar dos imágenes
 
 ```powershell
-pip install -r requirements-vision.txt
+python comparar_rostros.py ruta\persona_1.jpg ruta\persona_2.jpg
 ```
 
-La primera carga de biometría descarga el modelo de reconocimiento; mantené la conexión a Internet durante ese paso. Hasta completar la instalación, el panel, SQLite, altas, bajas y registro de accesos funcionan.
+El script detecta exactamente un rostro por imagen, calcula sus codificaciones, informa la distancia facial y muestra ambas imágenes con el resultado.
+
+### Control de asistencia
+
+1. Copiá fotos individuales a `empleados/`.
+2. Nombrá cada archivo con el nombre del empleado, por ejemplo `Ana_Perez.jpg`.
+3. Ejecutá:
+
+```powershell
+python control_asistencia.py
+```
+
+La cámara marca los rostros reconocidos y escribe una asistencia diaria por persona en `asistencia.csv`. Presioná `Q` para cerrar.
 
 ## Decisiones de diseño
 
 SQLite es la mejor opción para la demo: no necesita usuario, contraseña, hosting ni conexión de red. Para una fase posterior con varios molinetes simultáneos, se migraría a PostgreSQL y se protegerían los templates biométricos con cifrado y controles de acceso.
 
-El vector facial se guarda como `face_encoding`, no como hash: un encoding de reconocimiento facial es un vector numérico y no un hash criptográfico.
+El vector facial se guarda como `face_encoding`, no como hash: `face_recognition`, basado en `dlib`, produce una codificación de 128 valores y compara su distancia euclídea. El proyecto usa una tolerancia de `0.50` para ser más estricto que el valor predeterminado de la librería.
 
 ## Datos que no se suben al repositorio
 

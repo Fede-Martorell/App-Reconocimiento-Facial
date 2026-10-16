@@ -5,3 +5,6 @@ uploads/
 _review_docx/
 .env
 *.pyc
+asistencia.csv
+empleados/*
+!empleados/.gitkeep
